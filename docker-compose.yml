@@ -21,13 +21,13 @@ services:
     depends_on:
       - postgres
     environment:
-      PORT: 8080
+      PORT: 4080
       DATABASE_URL: postgres://monica:monica123@postgres:5432/monica_turnos?sslmode=disable
       FRONTEND_ORIGIN: http://localhost:5173
       N8N_SYNC_WEBHOOK_URL: ${N8N_SYNC_WEBHOOK_URL}
       N8N_SYNC_SECRET: ${N8N_SYNC_SECRET}
     ports:
-      - "8080:8080"
+      - "4080:4080"
 
 volumes:
   monica_turnos_data:

@@ -15,6 +15,6 @@ WORKDIR /app
 
 COPY --from=builder /app/monica-turnos-api .
 
-EXPOSE 8080
+EXPOSE 4080
 
 CMD ["./monica-turnos-api"]
