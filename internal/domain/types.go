@@ -67,6 +67,11 @@ type EventSyncAssignment struct {
 	Status            string `json:"status"`
 }
 
+type MonicaAssignmentInput struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
 type CreateEventInput struct {
 	GoogleCalendarEventID *string
 	Title                 string
@@ -94,6 +99,7 @@ type UpdateEventInput struct {
 
 type CreateAssignmentInput struct {
 	YoungResearcherID string
+	Status            string
 	AssignedBy        *string
 	Source            string
 }

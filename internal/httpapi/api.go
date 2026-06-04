@@ -21,6 +21,7 @@ type Repository interface {
 	GetEventByID(ctx context.Context, eventID string) (domain.Event, error)
 	ListAssignments(ctx context.Context) ([]domain.Assignment, error)
 	CreateEvent(ctx context.Context, input domain.CreateEventInput) (domain.Event, error)
+	CreateEventWithMonicaAssignments(ctx context.Context, input domain.CreateEventInput, assignments []domain.MonicaAssignmentInput) (domain.Event, []domain.Assignment, error)
 	UpdateEvent(ctx context.Context, eventID string, input domain.UpdateEventInput) (domain.Event, error)
 	CreateAssignment(ctx context.Context, eventID string, input domain.CreateAssignmentInput) (domain.Assignment, error)
 	DeleteAssignment(ctx context.Context, assignmentID string) (string, error)
@@ -37,18 +38,24 @@ type API struct {
 	syncer Syncer
 }
 
+type MonicaAssignmentInput struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
 type CreateEventRequest struct {
-	GoogleCalendarEventID *string `json:"google_calendar_event_id"`
-	Title                 string  `json:"title"`
-	StartAt               string  `json:"start_at"`
-	EndAt                 string  `json:"end_at"`
-	Location              string  `json:"location"`
-	Modality              string  `json:"modality"`
-	Status                string  `json:"status"`
-	RequiredPeople        int     `json:"required_people"`
-	Source                string  `json:"source"`
-	Description           *string `json:"description"`
-	CreatedBy             *string `json:"created_by"`
+	GoogleCalendarEventID *string                 `json:"google_calendar_event_id"`
+	Title                 string                  `json:"title"`
+	StartAt               string                  `json:"start_at"`
+	EndAt                 string                  `json:"end_at"`
+	Location              string                  `json:"location"`
+	Modality              string                  `json:"modality"`
+	Status                string                  `json:"status"`
+	RequiredPeople        int                     `json:"required_people"`
+	Source                string                  `json:"source"`
+	Description           *string                 `json:"description"`
+	CreatedBy             *string                 `json:"created_by"`
+	MonicaAssignments     []MonicaAssignmentInput `json:"monica_assignments"`
 }
 
 type UpdateEventRequest struct {
@@ -67,6 +74,11 @@ type CreateAssignmentRequest struct {
 	YoungResearcherID string  `json:"young_researcher_id"`
 	AssignedBy        *string `json:"assigned_by"`
 	Source            string  `json:"source"`
+}
+
+type CreateEventResponse struct {
+	domain.Event
+	Assignments []domain.Assignment `json:"assignments"`
 }
 
 func NewRouter(repo Repository, syncer Syncer, frontendOrigin string) http.Handler {
@@ -147,6 +159,8 @@ func (api *API) createEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("MONICA assignments recibidos: %d", len(req.MonicaAssignments))
+
 	if req.Title == "" || req.StartAt == "" || req.EndAt == "" {
 		writeError(w, http.StatusBadRequest, errors.New("title, start_at y end_at son obligatorios"))
 		return
@@ -176,7 +190,7 @@ func (api *API) createEvent(w http.ResponseWriter, r *http.Request) {
 		req.Source = "PANEL"
 	}
 
-	event, err := api.repo.CreateEvent(r.Context(), domain.CreateEventInput{
+	eventInput := domain.CreateEventInput{
 		GoogleCalendarEventID: req.GoogleCalendarEventID,
 		Title:                 req.Title,
 		StartAt:               startAt,
@@ -188,13 +202,45 @@ func (api *API) createEvent(w http.ResponseWriter, r *http.Request) {
 		Source:                req.Source,
 		Description:           req.Description,
 		CreatedBy:             req.CreatedBy,
-	})
+	}
+
+	var (
+		event             domain.Event
+		assignments       []domain.Assignment
+		monicaAssignments []domain.MonicaAssignmentInput
+	)
+
+	if len(req.MonicaAssignments) > 0 {
+		monicaAssignments = make([]domain.MonicaAssignmentInput, 0, len(req.MonicaAssignments))
+		for _, input := range req.MonicaAssignments {
+			monicaAssignments = append(monicaAssignments, domain.MonicaAssignmentInput{
+				Name:   input.Name,
+				Status: input.Status,
+			})
+		}
+
+		event, assignments, err = api.repo.CreateEventWithMonicaAssignments(r.Context(), eventInput, monicaAssignments)
+	} else {
+		event, err = api.repo.CreateEvent(r.Context(), eventInput)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	api.syncer.TriggerAndLog(context.WithoutCancel(r.Context()), "event_created", event.ID, req.CreatedBy)
+
+	if len(req.MonicaAssignments) > 0 {
+		if assignments == nil {
+			assignments = []domain.Assignment{}
+		}
+
+		writeJSON(w, http.StatusCreated, CreateEventResponse{
+			Event:       event,
+			Assignments: assignments,
+		})
+		return
+	}
 
 	writeJSON(w, http.StatusCreated, event)
 }

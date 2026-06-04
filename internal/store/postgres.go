@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
+	"strings"
 
 	"monica-turnos-api/internal/domain"
 
@@ -14,6 +16,10 @@ import (
 
 type Repository struct {
 	db *pgxpool.Pool
+}
+
+type queryRower interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 func New(db *pgxpool.Pool) *Repository {
@@ -172,7 +178,80 @@ func (repo *Repository) ListAssignments(ctx context.Context) ([]domain.Assignmen
 }
 
 func (repo *Repository) CreateEvent(ctx context.Context, input domain.CreateEventInput) (domain.Event, error) {
-	return scanEvent(repo.db.QueryRow(ctx, `
+	return createEvent(ctx, repo.db, input)
+}
+
+func (repo *Repository) CreateEventWithMonicaAssignments(
+	ctx context.Context,
+	input domain.CreateEventInput,
+	monicaAssignments []domain.MonicaAssignmentInput,
+) (domain.Event, []domain.Assignment, error) {
+	tx, err := repo.db.Begin(ctx)
+	if err != nil {
+		return domain.Event{}, nil, err
+	}
+	defer func() {
+		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
+			log.Printf("error revirtiendo transacción de evento MONICA: %v", rollbackErr)
+		}
+	}()
+
+	event, err := createEvent(ctx, tx, input)
+	if err != nil {
+		return domain.Event{}, nil, err
+	}
+
+	assignments := make([]domain.Assignment, 0, len(monicaAssignments))
+	seenResearchers := map[string]struct{}{}
+	assignedBy := "MONICA"
+
+	for _, input := range monicaAssignments {
+		name := strings.TrimSpace(input.Name)
+		log.Printf("Asignando joven %s al evento %s", input.Name, event.ID)
+
+		if name == "" {
+			log.Printf("warning: asignación MONICA sin nombre para evento %s; se omite", event.ID)
+			continue
+		}
+
+		researcherID, err := findResearcherIDByName(ctx, tx, name)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				log.Printf("warning: joven investigador %q no encontrado para evento %s; se omite asignación MONICA", input.Name, event.ID)
+				continue
+			}
+
+			return domain.Event{}, nil, err
+		}
+
+		if _, alreadySeen := seenResearchers[researcherID]; alreadySeen {
+			log.Printf("warning: joven investigador %q repetido en monica_assignments para evento %s; se omite duplicado", input.Name, event.ID)
+			continue
+		}
+		seenResearchers[researcherID] = struct{}{}
+
+		assignment, err := createAssignment(ctx, tx, event.ID, domain.CreateAssignmentInput{
+			YoungResearcherID: researcherID,
+			Status:            input.Status,
+			AssignedBy:        &assignedBy,
+			Source:            "MONICA",
+		})
+		if err != nil {
+			return domain.Event{}, nil, err
+		}
+
+		assignments = append(assignments, assignment)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Event{}, nil, err
+	}
+
+	return event, assignments, nil
+}
+
+func createEvent(ctx context.Context, db queryRower, input domain.CreateEventInput) (domain.Event, error) {
+	return scanEvent(db.QueryRow(ctx, `
 		INSERT INTO events (
 			google_calendar_event_id,
 			title,
@@ -321,7 +400,21 @@ func (repo *Repository) UpdateEvent(ctx context.Context, eventID string, input d
 }
 
 func (repo *Repository) CreateAssignment(ctx context.Context, eventID string, input domain.CreateAssignmentInput) (domain.Assignment, error) {
-	return scanAssignment(repo.db.QueryRow(ctx, `
+	return createAssignment(ctx, repo.db, eventID, input)
+}
+
+func createAssignment(ctx context.Context, db queryRower, eventID string, input domain.CreateAssignmentInput) (domain.Assignment, error) {
+	status := strings.TrimSpace(input.Status)
+	if status == "" {
+		status = "assigned"
+	}
+
+	source := strings.TrimSpace(input.Source)
+	if source == "" {
+		source = "PANEL"
+	}
+
+	return scanAssignment(db.QueryRow(ctx, `
 		INSERT INTO assignments (
 			event_id,
 			young_researcher_id,
@@ -329,7 +422,7 @@ func (repo *Repository) CreateAssignment(ctx context.Context, eventID string, in
 			assigned_by,
 			source
 		)
-		VALUES ($1, $2, 'assigned', $3, $4)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (event_id, young_researcher_id)
 		WHERE status IN ('assigned', 'confirmed')
 		DO UPDATE SET
@@ -348,9 +441,24 @@ func (repo *Repository) CreateAssignment(ctx context.Context, eventID string, in
 	`,
 		eventID,
 		input.YoungResearcherID,
+		status,
 		input.AssignedBy,
-		input.Source,
+		source,
 	))
+}
+
+func findResearcherIDByName(ctx context.Context, db queryRower, name string) (string, error) {
+	var researcherID string
+
+	err := db.QueryRow(ctx, `
+		SELECT id
+		FROM young_researchers
+		WHERE LOWER(TRIM(name)) = LOWER($1)
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, strings.TrimSpace(name)).Scan(&researcherID)
+
+	return researcherID, err
 }
 
 func (repo *Repository) DeleteAssignment(ctx context.Context, assignmentID string) (string, error) {
