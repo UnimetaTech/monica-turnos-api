@@ -1,13 +1,12 @@
-
 services:
   postgres:
     image: postgres:16
     container_name: monica_turnos_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: monica_turnos
-      POSTGRES_USER: monica
-      POSTGRES_PASSWORD: monica123
+      POSTGRES_DB: ${POSTGRES_DB:-monica_turnos}
+      POSTGRES_USER: ${POSTGRES_USER:-monica}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-monica123}
     expose:
       - "5432"
     volumes:
@@ -21,13 +20,13 @@ services:
     depends_on:
       - postgres
     environment:
-      PORT: 4080
-      DATABASE_URL: postgres://monica:monica123@postgres:5432/monica_turnos?sslmode=disable
-      FRONTEND_ORIGIN: http://localhost:5173
-      N8N_SYNC_WEBHOOK_URL: ${N8N_SYNC_WEBHOOK_URL}
-      N8N_SYNC_SECRET: ${N8N_SYNC_SECRET}
+      PORT: ${PORT:-4080}
+      DATABASE_URL: ${DATABASE_URL:-postgres://monica:monica123@postgres:5432/monica_turnos?sslmode=disable}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://monica.unimetatech.la}
+      N8N_SYNC_WEBHOOK_URL: ${N8N_SYNC_WEBHOOK_URL:-}
+      N8N_SYNC_SECRET: ${N8N_SYNC_SECRET:-}
     ports:
-      - "4080:4080"
+      - "${PORT:-4080}:${PORT:-4080}"
 
 volumes:
   monica_turnos_data:
