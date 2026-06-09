@@ -25,8 +25,8 @@ services:
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://monica.unimetatech.la}
       N8N_SYNC_WEBHOOK_URL: ${N8N_SYNC_WEBHOOK_URL:-}
       N8N_SYNC_SECRET: ${N8N_SYNC_SECRET:-}
-    ports:
-      - "${PORT:-4080}:${PORT:-4080}"
+    expose:
+      - "${PORT:-4080}"
 
 volumes:
   monica_turnos_data:
